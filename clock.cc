@@ -1,4 +1,3 @@
-#include <windows.h>
 #include <iostream>
 #include <iomanip>
 #include <mutex>
@@ -7,15 +6,18 @@
 #include <thread>
 #include <chrono>
 
+using namespace std::chrono;
+
 const int helz = 50;
-const int delta = 2000;
+const int freq = 1000000000;
+const nanoseconds delta(2000000);
 
 void proc(void);
 void _osc(void);
 void _divn(void);
 
-LARGE_INTEGER systick;
-LONGLONG proc_freq, proc_acc;
+time_point<steady_clock, nanoseconds> systick, proc_acc;
+nanoseconds proc_freq;
 unsigned long tick = 0;
 
 std::condition_variable cv_delta;
@@ -24,12 +26,10 @@ std::condition_variable cv_proc;
 
 int main()
 {
-    LARGE_INTEGER freq;
-    ::QueryPerformanceFrequency(&freq);
-    proc_freq = freq.QuadPart / helz;
+    proc_freq = nanoseconds(freq / helz);
     std::cerr
-	<< std::setw(20) << freq.QuadPart
-	<< std::setw(20) << proc_freq
+	<< std::setw(20) << freq
+	<< std::setw(20) << proc_freq.count()
 	<< std::endl;
 
     std::thread divn(_divn);
@@ -56,18 +56,13 @@ void proc(void)
 
 void _osc(void)
 {
-    BOOL r = ::QueryPerformanceCounter(&systick);
-    proc_acc = systick.QuadPart;
-    if (!r)
-	return;
+    systick = steady_clock::now();
+    proc_acc = systick;
 
     std::mutex mtx;
     std::unique_lock<std::mutex> lk(mtx);
     for (;;) {
-	cv_delta.wait_for(lk, std::chrono::microseconds(delta));
-	r = ::QueryPerformanceCounter(&systick);
-	if (!r)
-	    break;
+	cv_delta.wait_for(lk, delta);
 	cv_divn.notify_one();
     }
 }
@@ -78,7 +73,8 @@ void _divn(void)
     std::unique_lock<std::mutex> lk(mtx);
     for (;;) {
 	cv_divn.wait(lk);
-	if (systick.QuadPart - proc_acc < proc_freq)
+	systick = steady_clock::now();
+	if (systick - proc_acc < proc_freq)
 	    continue;
 	cv_proc.notify_one();
 	tick++;
